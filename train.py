@@ -193,9 +193,9 @@ if __name__ == "__main__":
         synchronize()
 
     if args.model_name == "texture":
-        from model import MultiScaleTextureGenerator
-        generator = MultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
-        g_ema = MultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
+        from model import ModifiedMultiScaleTextureGenerator
+        generator = ModifiedMultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
+        g_ema = ModifiedMultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
     else:
         from model import Generator
         generator = Generator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier)
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         discriminator = nn.parallel.DistributedDataParallel(discriminator, device_ids=[args.local_rank], output_device=args.local_rank, broadcast_buffers=False)
         dataset = TextureDatasetLmdb(args.input, train_transforms, args.image_size[0])
     else:
-        dataset = TextureDataset(args.input, train_transforms, args.image_size[0])        
+        dataset = TextureDataset(args.input, train_transforms, args.image_size[0])
 
     loader = data.DataLoader(dataset, batch_size=args.textures_per_batch, sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed), drop_last=True)
 
