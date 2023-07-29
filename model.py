@@ -966,7 +966,9 @@ class BagOfTextonsVariableSize(nn.Module):
 
         random_phase = 2*math.pi*torch.rand(1).to("cuda") if phase_noise is None else phase_noise
         # bm = self.amp*torch.sin(torch.matmul(self.freq, self.grid)+self.phase+random_phase)+self.offset
-        bm = self.amp*torch.sin(torch.matmul(2*math.pi*torch.sigmoid(self.freq), grid)+self.phase+random_phase)+self.offset # (textons, H*W)
+        ##############################
+        # map 0~2pi to pi~2pi
+        bm = self.amp*torch.sin(torch.matmul(math.pi*torch.sigmoid(self.freq) + math.pi, grid)+self.phase+random_phase)+self.offset # (textons, H*W)
         bm = bm.view(self.n_textons, 1, H, W)
         textons_broadcast = self.textons*bm # (textons, C, H, W)
         textons_broadcast_summed = textons_broadcast.sum(dim=0, keepdim=True)
