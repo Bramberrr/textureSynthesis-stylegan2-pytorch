@@ -27,7 +27,7 @@ parser.add_argument("--noise_dx", action="store_false", help="add noise to input
 parser.add_argument("--noise_std", type=float, default=0.01, help="standard deviation of noise added to Dx input")
 parser.add_argument("--random_90_rotate", action="store_true", help="random 90*k degree rotation")
 parser.add_argument("--random_flip", action="store_true", help="random horizontal and vertical flip")
-parser.add_argument("--random_phase_noise", action="store_false", help="random phase noise for texton broadcast")
+parser.add_argument("--random_pos_noise", action="store_false", help="random phase noise for texton broadcast")
 parser.add_argument("--local_rank", type=int, default=0, help="local rank for distributed training")
 parser.add_argument("--save_ckpt_every", type=int, default=500, help="save model ckpt every N iterations")
 parser.add_argument("--crops_per_texture", type=int, default=2, help="Number of crops per texture")

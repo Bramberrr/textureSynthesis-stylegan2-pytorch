@@ -1009,13 +1009,13 @@ class ModifiedStyledConv(nn.Module):
 
         self.texton = None
         if n_textons is not None:
-            self.texton = BagOfTextonsVariableSize(C=out_channel, n_textons=n_textons)
+            self.texton = ModifiedBagOfTextonsVariableSize(C=out_channel, n_textons=n_textons)
 
-    def forward(self, input, style, noise=None, phase_noise=None):
+    def forward(self, input, style, noise=None, pos_noise=None):
         out = self.conv(input, style)
         out = self.noise(out, noise=noise)
         if self.texton is not None:
-            textons = self.texton(out, phase_noise)
+            textons = self.texton(out, pos_noise)
             out = out + textons
         # out = out + self.bias
         out = self.activate(out)
@@ -1170,3 +1170,231 @@ class Encoder(nn.Module):
     def forward(self, input):
         pass
 
+#####################################
+
+class ModifiedBagOfTextonsVariableSize(nn.Module):
+    """
+    Frequency/amplitude/phase/offset/bagOfTextons are all 
+    independent of style vector 
+    """
+    def __init__(self, C=512, n_textons=16):
+        super().__init__()
+        self.C, self.n_textons = C, n_textons
+        
+        self.freq = nn.Parameter(torch.randn(n_textons, 2))
+        self.phase = nn.Parameter(torch.randn(n_textons, 1))
+        self.amp = nn.Parameter(torch.randn(n_textons, 1))
+        self.offset = nn.Parameter(torch.randn(n_textons, 1))
+        self.textons = nn.Parameter(torch.randn(n_textons,C,1,1))
+
+    def forward(self, input, pos_noise=None, H=None, W=None):
+        if H is None or W is None:
+            _, _, H, W = input.shape
+
+        if pos_noise is None:
+            pos_noise = torch.randn(1, 2).to(input.device)
+
+        w_grid = (torch.arange(start=0, end=W).to(input.device).repeat(H, 1) + pos_noise[0, 0] % W).view(1, H, W)
+        h_grid = (torch.arange(start=0, end=H).to(input.device).repeat(W, 1).T + pos_noise[0, 1] % H).view(1, H, W)
+
+        grid = torch.cat([w_grid, h_grid]).view(2, -1).type(torch.cuda.FloatTensor)
+
+        bm = self.amp*torch.sin(torch.matmul(2*math.pi*torch.sigmoid(self.freq), grid)+self.phase)+self.offset
+        bm = bm.view(self.n_textons, 1, H, W)
+        textons_broadcast = self.textons*bm 
+        textons_broadcast_summed = textons_broadcast.sum(dim=0, keepdim=True)
+
+        batch = input.shape[0]
+        y = textons_broadcast_summed.repeat(batch, 1, 1, 1)
+        return y
+
+
+class ModifiedMultiScaleTextureGenerator(nn.Module):
+    def __init__(
+        self,
+        size,
+        style_dim,
+        n_mlp,
+        channel_multiplier=2,
+        blur_kernel=[1, 3, 3, 1],
+        lr_mlp=0.01,
+        max_texton_size=64,
+        n_textons=16
+    ):
+        super().__init__()
+
+        self.size = size
+
+        self.style_dim = style_dim
+
+        layers = [PixelNorm()]
+
+        for i in range(n_mlp):
+            layers.append(
+                EqualLinear(
+                    style_dim, style_dim, lr_mul=lr_mlp, activation='fused_lrelu'
+                )
+            )
+
+        self.style = nn.Sequential(*layers)
+
+        self.channels = {
+            4: 512,
+            8: 512,
+            16: 512,
+            32: 512,
+            64: 256 * channel_multiplier,
+            128: 128 * channel_multiplier,
+            256: 64 * channel_multiplier,
+            512: 32 * channel_multiplier,
+            1024: 16 * channel_multiplier,
+        }
+
+        # self.input = ConstantInput(self.channels[4])
+        self.input = ModifiedBagOfTextonsVariableSize(C=self.channels[4], n_textons=n_textons)
+        self.conv1 = ModifiedStyledConv(
+            self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel, n_textons=n_textons
+        )
+        self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
+
+        self.log_size = int(math.log(size, 2))
+        self.num_layers = (self.log_size - 2) * 2 + 1
+
+        self.convs = nn.ModuleList()
+        self.upsamples = nn.ModuleList()
+        self.to_rgbs = nn.ModuleList()
+        self.noises = nn.Module()
+
+        in_channel = self.channels[4]
+
+        for layer_idx in range(self.num_layers):
+            res = (layer_idx + 5) // 2
+            shape = [1, 1, 2 ** res, 2 ** res]
+            self.noises.register_buffer(f'noise_{layer_idx}', torch.randn(*shape))
+
+        for i in range(3, self.log_size + 1):
+            out_channel = self.channels[2 ** i]
+            textons = n_textons if 2**i <= max_texton_size else None
+
+            self.convs.append(
+                ModifiedStyledConv(
+                    in_channel,
+                    out_channel,
+                    3,
+                    style_dim,
+                    upsample=True,
+                    blur_kernel=blur_kernel,
+                    n_textons=textons
+                )
+            )
+
+            self.convs.append(
+                ModifiedStyledConv(
+                    out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel, n_textons=textons
+                )
+            )
+
+            self.to_rgbs.append(ToRGB(out_channel, style_dim))
+
+            in_channel = out_channel
+
+        self.n_latent = self.log_size * 2 - 2
+
+    def make_noise(self):
+        # device = self.input.input.device
+        device = "cuda"
+
+        noises = [torch.randn(1, 1, 2 ** 2, 2 ** 2, device=device)]
+
+        for i in range(3, self.log_size + 1):
+            for _ in range(2):
+                noises.append(torch.randn(1, 1, 2 ** i, 2 ** i, device=device))
+
+        return noises
+
+    def mean_latent(self, n_latent):
+        device = "cuda"
+        latent_in = torch.randn(
+            n_latent, self.style_dim, device=device
+        )
+        latent = self.style(latent_in).mean(0, keepdim=True)
+
+        return latent
+
+    def get_latent(self, input):
+        return self.style(input)
+
+    def forward(
+        self,
+        styles,
+        return_latents=False,
+        inject_index=None,
+        truncation=1,
+        truncation_latent=None,
+        input_is_latent=False,
+        noise=None,
+        randomize_noise=True,
+        pos_noise=None,
+        i_h=4,
+        i_w=4
+    ):
+        if not input_is_latent:
+            styles = [self.style(s) for s in styles]
+
+        if noise is None:
+            if randomize_noise:
+                noise = [None] * self.num_layers
+            else:
+                noise = [
+                    getattr(self.noises, f'noise_{i}') for i in range(self.num_layers)
+                ]
+
+        if truncation < 1:
+            style_t = []
+
+            for style in styles:
+                style_t.append(
+                    truncation_latent + truncation * (style - truncation_latent)
+                )
+
+            styles = style_t
+
+        if len(styles) < 2:
+            inject_index = self.n_latent
+
+            if styles[0].ndim < 3:
+                latent = styles[0].unsqueeze(1).repeat(1, inject_index, 1)
+            else:
+                latent = styles[0]
+
+        else:
+            if inject_index is None:
+                inject_index = random.randint(1, self.n_latent - 1)
+
+            latent = styles[0].unsqueeze(1).repeat(1, inject_index, 1)
+            latent2 = styles[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
+
+            latent = torch.cat([latent, latent2], 1)
+
+        out = self.input(latent, pos_noise, i_h, i_w)
+        out = self.conv1(out, latent[:, 0], noise=noise[0], pos_noise=pos_noise)
+
+        skip = self.to_rgb1(out, latent[:, 1])
+
+        i = 1
+        for conv1, conv2, noise1, noise2, to_rgb in zip(
+            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
+        ):
+            out = conv1(out, latent[:, i], noise=noise1, pos_noise=pos_noise)
+            out = conv2(out, latent[:, i + 1], noise=noise2, pos_noise=pos_noise)
+            skip = to_rgb(out, latent[:, i + 2], skip)
+
+            i += 2
+
+        image = skip
+
+        if return_latents:
+            return image, latent
+
+        else:
+            return image, None

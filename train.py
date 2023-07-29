@@ -108,7 +108,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         print("Intra-texture settings: textures_per_batch: %d, crops_per_texture: %d"%(args.textures_per_batch, args.crops_per_texture))
         print("Inter-texture settings: WGAN: True, gp weight: %.5f, n_critic: %d, noise_dx: %r, noise_std: %.5f"%(args.gp ,args.n_critic, args.noise_dx, args.noise_std))
         print("Augmentation settings: Random Flip: %r, Random 90-degree Rotattion: %r"%(args.random_flip, args.random_90_rotate))
-        print("TextonBroadcast settings: number of textons per module: %d, max resolution to apply module: %d, phase noise is %r"%(args.n_textons, args.max_texton_size, args.random_phase_noise))
+        print("TextonBroadcast settings: number of textons per module: %d, max resolution to apply module: %d, phase noise is %r"%(args.n_textons, args.max_texton_size, args.random_pos_noise))
         pbar = tqdm(pbar, initial=args.start_iter, file=sys.stdout)
 
     d_loss_val, g_loss_val, loss_dict = 0, 0, {}
@@ -120,7 +120,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         d_module = discriminator
     accum = 0.5 ** (32 / (10 * 1000))
     sample_z = torch.randn(args.batch_size, args.latent_dim, device=device) # Fixed latent vector for monitoring during training 
-    phase_noise = None if args.random_phase_noise else 0
+    pos_noise = None if args.random_pos_noise else 0
     for idx in pbar:
         i = idx + args.start_iter
         if i > args.iter:
@@ -133,7 +133,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             real_img = next(loader)
             real_img = real_img.to(device).view(-1, 3, args.image_size[0], args.image_size[0])
             noise = [mixing_noise(args.batch_size, args.latent_dim, args.mixing, device)]
-            fake_img, _ = generator(noise, phase_noise=phase_noise)
+            fake_img, _ = generator(noise, pos_noise=pos_noise)
             fake_pred = discriminator(fake_img.detach())
             real_pred = discriminator(real_img)
             gp_loss = args.gp*compute_gradient_penalty(real_img.detach(), fake_img.detach(), discriminator)
@@ -149,7 +149,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         requires_grad(generator, True)
         requires_grad(discriminator, False)
         noise = [mixing_noise(args.batch_size, args.latent_dim, args.mixing, device)]
-        fake_img, _ = generator(noise, phase_noise=phase_noise)
+        fake_img, _ = generator(noise, pos_noise=pos_noise)
         fake_pred = discriminator(fake_img)
         g_loss = -torch.mean(fake_pred)
         loss_dict["g"] = g_loss.detach()
@@ -193,9 +193,9 @@ if __name__ == "__main__":
         synchronize()
 
     if args.model_name == "texture":
-        from model import MultiScaleTextureGenerator
-        generator = MultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
-        g_ema = MultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
+        from model import ModifiedMultiScaleTextureGenerator
+        generator = ModifiedMultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
+        g_ema = ModifiedMultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
     else:
         from model import Generator
         generator = Generator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier)
