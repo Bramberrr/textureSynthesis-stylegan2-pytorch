@@ -1172,6 +1172,31 @@ class Encoder(nn.Module):
 
 #####################################
 
+class LowPassFilter(nn.Module):
+    def __init__(self, kernel_size=3):
+        super().__init__()
+
+        assert kernel_size % 2 == 1, "Kernel size must be odd"
+        self.kernel_size = kernel_size
+
+    def forward(self, input):
+        # Get the number of channels dynamically based on the input
+        channels = input.shape[1]
+
+        # Create a low-pass filter kernel
+        kernel = 1.0 * torch.ones((channels, 1, self.kernel_size, self.kernel_size))
+
+        # Normalizing the kernel to ensure that the sum of all elements equals 1
+        kernel = kernel / torch.sum(kernel)
+
+        # Send kernel to the same device as input
+        kernel = kernel.to(input.device)
+
+        # Apply the kernel to the input
+        out = F.conv2d(input, kernel, padding=self.kernel_size//2, groups=channels)
+
+        return out
+
 class ModifiedBagOfTextonsVariableSize(nn.Module):
     """
     Frequency/amplitude/phase/offset/bagOfTextons are all 
@@ -1199,7 +1224,9 @@ class ModifiedBagOfTextonsVariableSize(nn.Module):
 
         grid = torch.cat([w_grid, h_grid]).view(2, -1).type(torch.cuda.FloatTensor)
 
-        bm = self.amp*torch.sin(torch.matmul(2*math.pi*torch.sigmoid(self.freq), grid)+self.phase)+self.offset
+        ##############################
+        # map 0~2pi to pi~2pi
+        bm = self.amp*torch.sin(torch.matmul(math.pi*torch.sigmoid(self.freq) + math.pi, grid)+self.phase)+self.offset
         bm = bm.view(self.n_textons, 1, H, W)
         textons_broadcast = self.textons*bm 
         textons_broadcast_summed = textons_broadcast.sum(dim=0, keepdim=True)
@@ -1256,6 +1283,8 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
             self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel, n_textons=n_textons
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
+
+        self.low_pass_filter = LowPassFilter(kernel_size=3)
 
         self.log_size = int(math.log(size, 2))
         self.num_layers = (self.log_size - 2) * 2 + 1
@@ -1386,6 +1415,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
             self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
             out = conv1(out, latent[:, i], noise=noise1, pos_noise=pos_noise)
+            out = self.low_pass_filter(out)
             out = conv2(out, latent[:, i + 1], noise=noise2, pos_noise=pos_noise)
             skip = to_rgb(out, latent[:, i + 2], skip)
 
