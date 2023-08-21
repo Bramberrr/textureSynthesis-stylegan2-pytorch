@@ -1,6 +1,7 @@
 import math
 import random
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 import sys
 
 import numpy as np
