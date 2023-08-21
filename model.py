@@ -1250,7 +1250,7 @@ class ModifiedBagOfTextonsVariableSize(nn.Module):
 
         grid = torch.cat([w_grid, h_grid]).view(2, -1).type(torch.cuda.FloatTensor)
 
-        bm = self.amp*torch.sin(torch.matmul(2*math.pi*torch.sigmoid(self.freq), grid)+self.phase+random_phase)+self.offset # (textons, H*W)
+        bm = self.amp*torch.sin(torch.matmul(2*math.pi*torch.sigmoid(self.freq), grid)+self.phase)+self.offset # (textons, H*W)
         bm = bm.view(self.n_textons, 1, H, W)
         textons_broadcast = self.textons*bm 
         textons_broadcast_summed = textons_broadcast.sum(dim=0, keepdim=True)
