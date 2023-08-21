@@ -1197,6 +1197,32 @@ class LowPassFilter(nn.Module):
 
         return out
 
+class LinearLowPassFilter(nn.Module):
+    def __init__(self, kernel_size=3):
+        super(LinearLowPassFilter, self).__init__()
+
+        assert kernel_size % 2 == 1, "Kernel size must be odd"
+        self.kernel_size = kernel_size
+
+    def forward(self, input):
+        # Get the number of channels dynamically based on the input
+        channels = input.shape[1]
+
+        # Create a linear 1D low-pass filter kernel for horizontal and vertical filtering
+        kernel_1d = torch.ones((channels, 1, self.kernel_size, 1)) / self.kernel_size
+        kernel_1d = kernel_1d.to(input.device)
+
+        kernel_vert = torch.ones((channels, 1, 1, self.kernel_size)) / self.kernel_size
+        kernel_vert = kernel_vert.to(input.device)
+
+        # Apply the horizontal kernel
+        out_horizontal = F.conv2d(input, kernel_1d, padding=(self.kernel_size//2, 0), groups=channels)
+
+        # Apply the vertical kernel
+        out = F.conv2d(out_horizontal, kernel_vert, padding=(0, self.kernel_size//2), groups=channels)
+
+        return out
+
 class ModifiedBagOfTextonsVariableSize(nn.Module):
     """
     Frequency/amplitude/phase/offset/bagOfTextons are all 
@@ -1224,9 +1250,7 @@ class ModifiedBagOfTextonsVariableSize(nn.Module):
 
         grid = torch.cat([w_grid, h_grid]).view(2, -1).type(torch.cuda.FloatTensor)
 
-        ##############################
-        # map 0~2pi to pi~2pi
-        bm = self.amp*torch.sin(torch.matmul(math.pi*torch.sigmoid(self.freq) + math.pi, grid)+self.phase)+self.offset
+        bm = self.amp*torch.sin(torch.matmul(2*math.pi*torch.sigmoid(self.freq), grid)+self.phase+random_phase)+self.offset # (textons, H*W)
         bm = bm.view(self.n_textons, 1, H, W)
         textons_broadcast = self.textons*bm 
         textons_broadcast_summed = textons_broadcast.sum(dim=0, keepdim=True)
@@ -1284,7 +1308,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
-        self.low_pass_filter = LowPassFilter(kernel_size=3)
+        self.low_pass_filter = LinearLowPassFilter(kernel_size=3)
 
         self.log_size = int(math.log(size, 2))
         self.num_layers = (self.log_size - 2) * 2 + 1
