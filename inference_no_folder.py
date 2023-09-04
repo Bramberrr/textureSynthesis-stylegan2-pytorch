@@ -20,9 +20,9 @@ def inference_one_latent_and_save(generator, z=None, image_size=256, output=None
     with torch.no_grad():
         fake_img, _ = generator([z], input_is_latent=False, i_h=i_h, i_w=i_w)
         fake_img = utils.deprocess_image(fake_img)
-        img_folder = os.path.join(output, "%04dby%04d"%(image_size,image_size), "%04d_th_crop"%texture_idx)
-        utils.mkdir(img_folder)
-        img_filename = os.path.join(img_folder,"%04d_th_texture_%04d_th_crop_%04dby%04d.png" % (texture_idx, crop_idx, image_size, image_size)) 
+        # img_folder = os.path.join(output, "%04dby%04d"%(image_size,image_size), "%04d_th_crop"%texture_idx)
+        # utils.mkdir(img_folder)
+        img_filename = os.path.join(output,"%04d_th_texture_%04d_th_crop_%04dby%04d.png" % (texture_idx, crop_idx, image_size, image_size)) 
         save_image(fake_img[0], img_filename)
 
 if __name__ == "__main__":
@@ -58,14 +58,15 @@ if __name__ == "__main__":
                     inference_one_latent_and_save(generator, z, img_size, folder_path, i, j)
     except:
         print("No pre-defined latent vectors provided. Latent vectors will be sampled online")
-        folder_path = os.path.join(args.output, "online_inference", ckpt_name, "seed"+str(int(args.seed))) 
+        # folder_path = os.path.join(args.output, "online_inference", ckpt_name, "seed"+str(int(args.seed))) 
+        folder_path = args.output
         utils.mkdir(folder_path)
         for i in tqdm(range(args.n_textures)):           
             z = torch.randn(1, args.latent_dim, device=device, requires_grad=False)
             for img_size in args.image_size:
                 for j in range(args.samples_per_texture):   
                     inference_one_latent_and_save(generator, z, img_size, folder_path, i, j)
-            z_filename = os.path.join(folder_path, "%09d.pt" % i)
-            torch.save(z, z_filename)
+            # z_filename = os.path.join(folder_path, "%09d.pt" % i)
+            # torch.save(z, z_filename)
 
 
