@@ -918,6 +918,7 @@ class MultiScaleTextureGenerator(nn.Module):
             latent = torch.cat([latent, latent2], 1)
 
         out = self.input(latent, phase_noise, i_h, i_w)
+        y = out.clone()
         out = self.conv1(out, latent[:, 0], noise=noise[0], phase_noise=phase_noise)
 
         skip = self.to_rgb1(out, latent[:, 1])
@@ -938,7 +939,7 @@ class MultiScaleTextureGenerator(nn.Module):
             return image, latent
 
         else:
-            return image, None  
+            return image, y  
 
 class BagOfTextonsVariableSize(nn.Module):
     """
@@ -1157,16 +1158,65 @@ class Discriminator(nn.Module):
 
         return out
 
+# class Encoder(nn.Module):
+#     """
+#     Mapping image to latent vector
+#     """
+#     def __init__(self, size):
+#         super().__init__()
+#         self.size = size
+#         pass
+#         pass
+
+#     def forward(self, input):
+#         pass
+
+
 class Encoder(nn.Module):
-    """
-    Mapping image to latent vector
-    """
-    def __init__(self, size):
+    def __init__(self, channel_multiplier=2, style_dim=512, n_textons=16, C=512):
         super().__init__()
-        self.size = size
-        pass
-        pass
+        
+        self.channel_multiplier = channel_multiplier
+        self.style_dim = style_dim
+        self.n_textons = n_textons
 
-    def forward(self, input):
-        pass
+        self.initial_conv = nn.Sequential(
+            nn.Conv2d(3, 32 * channel_multiplier, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+        )
 
+        self.blocks = nn.Sequential(
+            ResBlock(32 * channel_multiplier, 64 * channel_multiplier),
+            ResBlock(64 * channel_multiplier, 128 * channel_multiplier),
+            ResBlock(128 * channel_multiplier, 256 * channel_multiplier),
+            ResBlock(256 * channel_multiplier, 512 * channel_multiplier),
+        )
+
+        self.final_conv = nn.Sequential(
+            nn.Conv2d(512 * channel_multiplier, 512, kernel_size=3, stride=1, padding=1),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+        )
+
+        self.mapping_network = nn.Sequential(
+            nn.Linear(512, style_dim),
+            nn.ReLU(),
+            nn.Linear(style_dim, style_dim),
+        )
+
+        self.texton_network = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, C*4*4),
+            nn.Tanh(),  # Activation function to keep the output in a certain range, adjust as needed
+        )
+
+    def forward(self, x):
+        x = self.initial_conv(x)
+        x = self.blocks(x)
+        x = self.final_conv(x)
+        
+        latent = self.mapping_network(x)
+        y = self.texton_network(x).view(-1, self.channel_multiplier * 256, 4, 4) 
+    
+        return latent,y
