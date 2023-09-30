@@ -9,7 +9,7 @@ parser.add_argument('--image_size', action='store', type=int, nargs="+", default
 parser.add_argument("--latent_dim", type=int, default=512, help="dimension of latent vector")
 parser.add_argument("--load_ckpt", type=str, default=None, help="path to the checkpoints to load")
 parser.add_argument("--load_e", type=str, default=None, help="path to the checkpoints to load")
-parser.add_argument("--latent_weight", type=int, default=20, help="weight of latent loss")
+parser.add_argument("--latent_weight", type=float, default=0.1, help="weight of latent loss")
 parser.add_argument("--y_weight", type=int, default=20, help="weight of latent loss")
 parser.add_argument("--image_weight", type=float, default=1, help="weight of latent loss")
 parser.add_argument("--model_name", type=str, default="texture", choices=["texture", "stylegan2"], help="use our method or original stylegan2")

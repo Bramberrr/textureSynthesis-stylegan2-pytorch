@@ -182,7 +182,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                 wandb.log(logs)    
 
             if i % args.save_ckpt_every == 0:
-                torch.save({"g": g_module.state_dict(), "d": d_module.state_dict(), "g_ema": g_ema.state_dict(), "g_optim": g_optim.state_dict(), "d_optim": d_optim.state_dict(), "args": args}, f"{args.output}/{str(i).zfill(10)}.pt")
+                torch.save({"g": g_module.state_dict(), "d": d_module.state_dict(), "g_ema": g_ema.state_dict(), "g_optim": g_optim.state_dict(), "d_optim": d_optim.state_dict(), "args": args}, f"{args.output}/last.pt")
 
 if __name__ == "__main__":
     device = args.device     

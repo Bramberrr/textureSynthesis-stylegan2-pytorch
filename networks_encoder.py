@@ -240,4 +240,5 @@ class GradualStyleEncoder(nn.Module):
             latents.append(self.styles[j](p1))
 
         out = torch.stack(latents, dim=1)
+        out  = torch.mean(out, dim=1)
         return out

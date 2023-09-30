@@ -220,6 +220,7 @@ class GradualStyleEncoder(nn.Module):
             latents.append(self.styles[j](p1))
 
         out = torch.stack(latents, dim=1)
+        out  = torch.mean(out, dim=1)
         return out
 
 class PixelNorm(nn.Module):
@@ -794,7 +795,7 @@ class MultiScaleTextureGenerator(nn.Module):
         # self.input = ConstantInput(self.channels[4])
         self.input = BagOfTextonsVariableSize(C=self.channels[4], n_textons=n_textons)
         self.conv1 = ModifiedStyledConv(
-            self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel, n_textons=n_textons
+            self.channels[4], self.channels[4], 3, style_dim, texton=self.input, blur_kernel=blur_kernel, n_textons=n_textons
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
@@ -823,6 +824,7 @@ class MultiScaleTextureGenerator(nn.Module):
                     out_channel,
                     3,
                     style_dim,
+                    self.input,
                     upsample=True,
                     blur_kernel=blur_kernel,
                     n_textons=textons
@@ -831,7 +833,7 @@ class MultiScaleTextureGenerator(nn.Module):
 
             self.convs.append(
                 ModifiedStyledConv(
-                    out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel, n_textons=textons
+                    out_channel, out_channel, 3, style_dim, self.input, blur_kernel=blur_kernel, n_textons=textons
                 )
             )
 
@@ -986,6 +988,7 @@ class ModifiedStyledConv(nn.Module):
         out_channel,
         kernel_size,
         style_dim,
+        texton,
         upsample=False,
         blur_kernel=[1, 3, 3, 1],
         demodulate=True,
@@ -1008,9 +1011,9 @@ class ModifiedStyledConv(nn.Module):
         # self.activate = ScaledLeakyReLU(0.2)
         self.activate = FusedLeakyReLU(out_channel)
 
-        self.texton = None
-        if n_textons is not None:
-            self.texton = BagOfTextonsVariableSize(C=out_channel, n_textons=n_textons)
+        self.texton = texton
+        # if n_textons is not None:
+        #     # self.texton = BagOfTextonsVariableSize(C=out_channel, n_textons=n_textons)
 
     def forward(self, input, style, noise=None, phase_noise=None):
         out = self.conv(input, style)
