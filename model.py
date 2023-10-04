@@ -806,6 +806,9 @@ class MultiScaleTextureGenerator(nn.Module):
         self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
         self.noises = nn.Module()
+        self.TBs = nn.ModuleList()
+
+        self.TBs.append(self.input)
 
         in_channel = self.channels[4]
 
@@ -817,14 +820,17 @@ class MultiScaleTextureGenerator(nn.Module):
         for i in range(3, self.log_size + 1):
             out_channel = self.channels[2 ** i]
             textons = n_textons if 2**i <= max_texton_size else None
-
+            texton = self.input
+            if out_channel != 512:
+                texton = BagOfTextonsVariableSize(C=out_channel, n_textons=n_textons)
+                self.TBs.append(texton)
             self.convs.append(
                 ModifiedStyledConv(
                     in_channel,
                     out_channel,
                     3,
                     style_dim,
-                    self.input,
+                    texton,
                     upsample=True,
                     blur_kernel=blur_kernel,
                     n_textons=textons
@@ -833,7 +839,7 @@ class MultiScaleTextureGenerator(nn.Module):
 
             self.convs.append(
                 ModifiedStyledConv(
-                    out_channel, out_channel, 3, style_dim, self.input, blur_kernel=blur_kernel, n_textons=textons
+                    out_channel, out_channel, 3, style_dim, texton, blur_kernel=blur_kernel, n_textons=textons
                 )
             )
 
@@ -866,6 +872,9 @@ class MultiScaleTextureGenerator(nn.Module):
 
     def get_latent(self, input):
         return self.style(input)
+    
+    def get_TBs(self):
+        return(self.TBs)
 
     def forward(
         self,
