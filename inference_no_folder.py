@@ -31,8 +31,8 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     if args.model_name == "texture":
-        from model import ModifiedMultiScaleTextureGenerator
-        generator = ModifiedMultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
+        from model import MultiScaleTextureGenerator
+        generator = MultiScaleTextureGenerator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier, max_texton_size=args.max_texton_size, n_textons=args.n_textons)
     else:
         from model import Generator
         generator = Generator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier)
