@@ -22,6 +22,7 @@ A pretrained model (as describled in the paper) can be downloaded from [here](ht
 ## Generate samples
 
 > python inference.py --n_textures 500 --samples_per_texture 10 --image_size 256,512,1024
+python inference_no_folder.py --n_textures 10000 --samples_per_texture 1 --image_size 256 --output /ssd/stylegan2/10koutput/lpf --load_ckpt trained_model/lpf/0000300000.pt
 
 ## Calculate TIPP
 
