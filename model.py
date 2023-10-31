@@ -1222,6 +1222,47 @@ class LinearLowPassFilter(nn.Module):
         out = F.conv2d(out_horizontal, kernel_vert, padding=(0, self.kernel_size//2), groups=channels)
 
         return out
+    
+class GaussianLowPassFilter(nn.Module):
+    def __init__(self, kernel_size=3, sigma=None):
+        super(GaussianLowPassFilter, self).__init__()
+
+        assert kernel_size % 2 == 1, "Kernel size must be odd"
+        self.kernel_size = kernel_size
+
+        # If sigma isn't specified, a general rule is to set it to be 0.3*((ksize-1)*0.5 - 1) + 0.8
+        self.sigma = sigma if sigma is not None else 0.3 * ((kernel_size - 1) * 0.5 - 1) + 0.8
+        self.kernel = self.generate_gaussian_kernel(kernel_size, self.sigma)
+
+    def generate_gaussian_kernel(self, kernel_size, sigma):
+        """Generate a Gaussian kernel based on kernel size and sigma."""
+        kernel_1d = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
+        for i in range(kernel_size):
+            kernel_1d[i] = np.exp(-kernel_1d[i]**2 / (2*sigma**2))
+        kernel_1d /= kernel_1d.sum()
+
+        return torch.tensor(kernel_1d, dtype=torch.float32)
+
+    def forward(self, input):
+        # Get the number of channels dynamically based on the input
+        channels = input.shape[1]
+
+        # Expand dimensions to create 2D convolutional kernel
+        kernel_1d = self.kernel.unsqueeze(0).unsqueeze(0).unsqueeze(-1)
+        kernel_vert = self.kernel.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+
+        # Repeat kernel for all channels and send to device
+        kernel_1d = kernel_1d.repeat(channels, 1, 1, 1).to(input.device)
+        kernel_vert = kernel_vert.repeat(channels, 1, 1, 1).to(input.device)
+
+        # Apply the horizontal kernel
+        out_horizontal = F.conv2d(input, kernel_1d, padding=(self.kernel_size//2, 0), groups=channels)
+
+        # Apply the vertical kernel
+        out = F.conv2d(out_horizontal, kernel_vert, padding=(0, self.kernel_size//2), groups=channels)
+
+        return out
+    
 
 class ModifiedMultiScaleTextureGenerator(nn.Module):
     def __init__(
@@ -1271,7 +1312,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
-        self.low_pass_filter = LinearLowPassFilter(kernel_size=5)
+        self.low_pass_filter = GaussianLowPassFilter(kernel_size=3, sigma=1.0)
 
         self.log_size = int(math.log(size, 2))
         self.num_layers = (self.log_size - 2) * 2 + 1
