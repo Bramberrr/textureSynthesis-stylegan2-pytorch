@@ -38,35 +38,36 @@ if __name__ == "__main__":
         generator = Generator(size=args.image_size[0], style_dim=args.latent_dim, n_mlp=args.n_mlp, channel_multiplier=args.channel_multiplier)
     generator.to(device)
     generator.eval()
+    print(generator)
 
-    if args.load_ckpt is not None:
-        print("Loading %s model from %s:" % (args.model_name, args.load_ckpt))
-        ckpt = torch.load(args.load_ckpt, map_location=lambda storage, loc: storage)
-        generator.load_state_dict(ckpt["g_ema"])
-        ckpt_name = os.path.splitext(os.path.basename(args.load_ckpt.strip("/")))[0]
+    # if args.load_ckpt is not None:
+    #     print("Loading %s model from %s:" % (args.model_name, args.load_ckpt))
+    #     ckpt = torch.load(args.load_ckpt, map_location=lambda storage, loc: storage)
+    #     generator.load_state_dict(ckpt["g_ema"])
+    #     ckpt_name = os.path.splitext(os.path.basename(args.load_ckpt.strip("/")))[0]
 
-    try:
-        sample_z = torch.load(args.input).to(device)
-        print("Successfully loaded pre-defined latent vectors for inference")
-        latent_name = os.path.splitext(os.path.basename(args.input.strip("/")))[0]
-        folder_path = os.path.join(args.output, "offline_inference", ckpt_name, latent_name, "seed"+str(int(args.seed))) 
-        utils.mkdir(folder_path)
-        for i in tqdm(range(sample_z.shape[0])):
-            z = sample_z[i:i+1]
-            for j in range(args.samples_per_texture):
-                for img_size in args.image_size:
-                    inference_one_latent_and_save(generator, z, img_size, folder_path, i, j)
-    except:
-        print("No pre-defined latent vectors provided. Latent vectors will be sampled online")
-        # folder_path = os.path.join(args.output, "online_inference", ckpt_name, "seed"+str(int(args.seed))) 
-        folder_path = args.output
-        utils.mkdir(folder_path)
-        for i in tqdm(range(args.n_textures)):           
-            z = torch.randn(1, args.latent_dim, device=device, requires_grad=False)
-            for img_size in args.image_size:
-                for j in range(args.samples_per_texture):   
-                    inference_one_latent_and_save(generator, z, img_size, folder_path, i, j)
-            # z_filename = os.path.join(folder_path, "%09d.pt" % i)
-            # torch.save(z, z_filename)
+    # try:
+    #     sample_z = torch.load(args.input).to(device)
+    #     print("Successfully loaded pre-defined latent vectors for inference")
+    #     latent_name = os.path.splitext(os.path.basename(args.input.strip("/")))[0]
+    #     folder_path = os.path.join(args.output, "offline_inference", ckpt_name, latent_name, "seed"+str(int(args.seed))) 
+    #     utils.mkdir(folder_path)
+    #     for i in tqdm(range(sample_z.shape[0])):
+    #         z = sample_z[i:i+1]
+    #         for j in range(args.samples_per_texture):
+    #             for img_size in args.image_size:
+    #                 inference_one_latent_and_save(generator, z, img_size, folder_path, i, j)
+    # except:
+    #     print("No pre-defined latent vectors provided. Latent vectors will be sampled online")
+    #     # folder_path = os.path.join(args.output, "online_inference", ckpt_name, "seed"+str(int(args.seed))) 
+    #     folder_path = args.output
+    #     utils.mkdir(folder_path)
+    #     for i in tqdm(range(args.n_textures)):           
+    #         z = torch.randn(1, args.latent_dim, device=device, requires_grad=False)
+    #         for img_size in args.image_size:
+    #             for j in range(args.samples_per_texture):   
+    #                 inference_one_latent_and_save(generator, z, img_size, folder_path, i, j)
+    #         # z_filename = os.path.join(folder_path, "%09d.pt" % i)
+    #         # torch.save(z, z_filename)
 
 

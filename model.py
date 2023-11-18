@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.autograd import Function
-
+import scipy
 from op import FusedLeakyReLU, fused_leaky_relu, upfirdn2d
 
 class Flatten(nn.Module):
@@ -1172,97 +1172,54 @@ class Encoder(nn.Module):
 
 ################################
 
-class LowPassFilter(nn.Module):
-    def __init__(self, kernel_size=3):
+class LPF(nn.Module):
+    def __init__(
+        self,
+        numtaps,
+        cutoff,
+        width,
+        fs, 
+        radial=False
+    ):
         super().__init__()
-
-        assert kernel_size % 2 == 1, "Kernel size must be odd"
-        self.kernel_size = kernel_size
-
-    def forward(self, input):
-        # Get the number of channels dynamically based on the input
-        channels = input.shape[1]
-
-        # Create a low-pass filter kernel
-        kernel = 1.0 * torch.ones((channels, 1, self.kernel_size, self.kernel_size))
-
-        # Normalizing the kernel to ensure that the sum of all elements equals 1
-        kernel = kernel / torch.sum(kernel)
-
-        # Send kernel to the same device as input
-        kernel = kernel.to(input.device)
-
-        # Apply the kernel to the input
-        out = F.conv2d(input, kernel, padding=self.kernel_size//2, groups=channels)
-
-        return out
-
-class LinearLowPassFilter(nn.Module):
-    def __init__(self, kernel_size=3):
-        super(LinearLowPassFilter, self).__init__()
-
-        assert kernel_size % 2 == 1, "Kernel size must be odd"
-        self.kernel_size = kernel_size
-
-    def forward(self, input):
-        # Get the number of channels dynamically based on the input
-        channels = input.shape[1]
-
-        # Create a linear 1D low-pass filter kernel for horizontal and vertical filtering
-        kernel_1d = torch.ones((channels, 1, self.kernel_size, 1)) / self.kernel_size
-        kernel_1d = kernel_1d.to(input.device)
-
-        kernel_vert = torch.ones((channels, 1, 1, self.kernel_size)) / self.kernel_size
-        kernel_vert = kernel_vert.to(input.device)
-
-        # Apply the horizontal kernel
-        out_horizontal = F.conv2d(input, kernel_1d, padding=(self.kernel_size//2, 0), groups=channels)
-
-        # Apply the vertical kernel
-        out = F.conv2d(out_horizontal, kernel_vert, padding=(0, self.kernel_size//2), groups=channels)
-
-        return out
+        self.numtaps = numtaps
+        self.cutoff = cutoff
+        self.width = width
+        self.fs = fs
+        self.radial = radial
+        self.filter = self.design_lowpass_filter()
     
-class GaussianLowPassFilter(nn.Module):
-    def __init__(self, kernel_size=3, sigma=None):
-        super(GaussianLowPassFilter, self).__init__()
+    def design_lowpass_filter(self):
+        assert self.numtaps >= 1
 
-        assert kernel_size % 2 == 1, "Kernel size must be odd"
-        self.kernel_size = kernel_size
+        # Identity filter.
+        if self.numtaps == 1:
+            return None
 
-        # If sigma isn't specified, a general rule is to set it to be 0.3*((ksize-1)*0.5 - 1) + 0.8
-        self.sigma = sigma if sigma is not None else 0.3 * ((kernel_size - 1) * 0.5 - 1) + 0.8
-        self.kernel = self.generate_gaussian_kernel(kernel_size, self.sigma)
+        # Separable Kaiser low-pass filter.
+        if not self.radial:
+            f = scipy.signal.firwin(numtaps=self.numtaps, cutoff=self.cutoff, width=self.width, fs=self.fs)
+            return torch.as_tensor(f, dtype=torch.float32)
 
-    def generate_gaussian_kernel(self, kernel_size, sigma):
-        """Generate a Gaussian kernel based on kernel size and sigma."""
-        kernel_1d = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
-        for i in range(kernel_size):
-            kernel_1d[i] = np.exp(-kernel_1d[i]**2 / (2*sigma**2))
-        kernel_1d /= kernel_1d.sum()
+        # Radially symmetric jinc-based filter.
+        x = (np.arange(self.numtaps) - (self.numtaps - 1) / 2) / self.fs
+        r = np.hypot(*np.meshgrid(x, x))
+        f = scipy.special.j1(2 * self.cutoff * (np.pi * r)) / (np.pi * r)
+        beta = scipy.signal.kaiser_beta(scipy.signal.kaiser_atten(self.numtaps, self.width / (self.fs / 2)))
+        w = np.kaiser(self.numtaps, beta)
+        f *= np.outer(w, w)
+        f /= np.sum(f)
+        return torch.as_tensor(f, dtype=torch.float32)
+    def forward(self, x):
+        filter = self.filter.unsqueeze(0).unsqueeze(0)  # Add two dimensions for out_channels and in_channels
+        filter = filter.repeat(x.shape[1], 1, 1, 1).to("cuda")  # Repeat filter for each input channel
 
-        return torch.tensor(kernel_1d, dtype=torch.float32)
+        # Convolve the filter with each image in the batch
+        # Padding should be set so that the output size is equal to the input size (same padding)
+        padding = (filter.shape[2] // 2, filter.shape[3] // 2)
+        filtered_images = F.conv2d(x, filter, padding=padding, groups=x.shape[1])
 
-    def forward(self, input):
-        # Get the number of channels dynamically based on the input
-        channels = input.shape[1]
-
-        # Expand dimensions to create 2D convolutional kernel
-        kernel_1d = self.kernel.unsqueeze(0).unsqueeze(0).unsqueeze(-1)
-        kernel_vert = self.kernel.unsqueeze(0).unsqueeze(0).unsqueeze(0)
-
-        # Repeat kernel for all channels and send to device
-        kernel_1d = kernel_1d.repeat(channels, 1, 1, 1).to(input.device)
-        kernel_vert = kernel_vert.repeat(channels, 1, 1, 1).to(input.device)
-
-        # Apply the horizontal kernel
-        out_horizontal = F.conv2d(input, kernel_1d, padding=(self.kernel_size//2, 0), groups=channels)
-
-        # Apply the vertical kernel
-        out = F.conv2d(out_horizontal, kernel_vert, padding=(0, self.kernel_size//2), groups=channels)
-
-        return out
-    
+        return filtered_images
 
 class ModifiedMultiScaleTextureGenerator(nn.Module):
     def __init__(
@@ -1312,8 +1269,6 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
-        self.low_pass_filter = GaussianLowPassFilter(kernel_size=3, sigma=1.0)
-
         self.log_size = int(math.log(size, 2))
         self.num_layers = (self.log_size - 2) * 2 + 1
 
@@ -1321,6 +1276,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
         self.noises = nn.Module()
+        self.lpfs = nn.ModuleList()
 
         in_channel = self.channels[4]
 
@@ -1345,6 +1301,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
                 )
             )
 
+            self.lpfs.append(LPF(21,2**(i-1),2*i,2**(i+1)))
             self.convs.append(
                 ModifiedStyledConv(
                     out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel, n_textons=textons
@@ -1439,11 +1396,11 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         skip = self.to_rgb1(out, latent[:, 1])
 
         i = 1
-        for conv1, conv2, noise1, noise2, to_rgb in zip(
-            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
+        for conv1, conv2, noise1, noise2, to_rgb, lpf in zip(
+            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs, self.lpfs
         ):
             out = conv1(out, latent[:, i], noise=noise1, phase_noise=phase_noise)
-            out = self.low_pass_filter(out)
+            out = lpf(out)
             out = conv2(out, latent[:, i + 1], noise=noise2, phase_noise=phase_noise)
             skip = to_rgb(out, latent[:, i + 2], skip)
 
