@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.autograd import Function
-
+import scipy
 from op import FusedLeakyReLU, fused_leaky_relu, upfirdn2d
 
 class Flatten(nn.Module):
@@ -1208,6 +1208,54 @@ class ModifiedBagOfTextonsVariableSize(nn.Module):
         y = textons_broadcast_summed.repeat(batch, 1, 1, 1)
         return y
 
+class LPF(nn.Module):
+    def __init__(
+        self,
+        numtaps,
+        cutoff,
+        width,
+        fs, 
+        radial=False
+    ):
+        super().__init__()
+        self.numtaps = numtaps
+        self.cutoff = cutoff
+        self.width = width
+        self.fs = fs
+        self.radial = radial
+        self.filter = self.design_lowpass_filter()
+    
+    def design_lowpass_filter(self):
+        assert self.numtaps >= 1
+
+        # Identity filter.
+        if self.numtaps == 1:
+            return None
+
+        # Separable Kaiser low-pass filter.
+        if not self.radial:
+            f = scipy.signal.firwin(numtaps=self.numtaps, cutoff=self.cutoff, width=self.width, fs=self.fs)
+            return torch.as_tensor(f, dtype=torch.float32)
+
+        # Radially symmetric jinc-based filter.
+        x = (np.arange(self.numtaps) - (self.numtaps - 1) / 2) / self.fs
+        r = np.hypot(*np.meshgrid(x, x))
+        f = scipy.special.j1(2 * self.cutoff * (np.pi * r)) / (np.pi * r)
+        beta = scipy.signal.kaiser_beta(scipy.signal.kaiser_atten(self.numtaps, self.width / (self.fs / 2)))
+        w = np.kaiser(self.numtaps, beta)
+        f *= np.outer(w, w)
+        f /= np.sum(f)
+        return torch.as_tensor(f, dtype=torch.float32)
+    def forward(self, x):
+        filter = self.filter.unsqueeze(0).unsqueeze(0)  # Add two dimensions for out_channels and in_channels
+        filter = filter.repeat(x.shape[1], 1, 1, 1).to("cuda")  # Repeat filter for each input channel
+
+        # Convolve the filter with each image in the batch
+        # Padding should be set so that the output size is equal to the input size (same padding)
+        padding = (filter.shape[2] // 2, filter.shape[3] // 2)
+        filtered_images = F.conv2d(x, filter, padding=padding, groups=x.shape[1])
+
+        return filtered_images
 
 class ModifiedMultiScaleTextureGenerator(nn.Module):
     def __init__(
@@ -1264,6 +1312,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
         self.noises = nn.Module()
+        self.lpfs = nn.ModuleList()
 
         in_channel = self.channels[4]
 
@@ -1287,7 +1336,7 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
                     n_textons=textons
                 )
             )
-
+            self.lpfs.append(LPF(21,2**(i-1),2*i,2**(i+1)))
             self.convs.append(
                 ModifiedStyledConv(
                     out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel, n_textons=textons
@@ -1382,10 +1431,11 @@ class ModifiedMultiScaleTextureGenerator(nn.Module):
         skip = self.to_rgb1(out, latent[:, 1])
 
         i = 1
-        for conv1, conv2, noise1, noise2, to_rgb in zip(
-            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
+        for conv1, conv2, noise1, noise2, to_rgb, lpf in zip(
+            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs, self.lpfs
         ):
             out = conv1(out, latent[:, i], noise=noise1, pos_noise=pos_noise)
+            out = lpf(out)
             out = conv2(out, latent[:, i + 1], noise=noise2, pos_noise=pos_noise)
             skip = to_rgb(out, latent[:, i + 2], skip)
 
